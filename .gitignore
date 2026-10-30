@@ -1,19 +1,19 @@
 # Dependencies
 node_modules/
-server/node_modules/
-client/node_modules/
+backend/node_modules/
+frontend/node_modules/
 
 # Build outputs
 dist/
-server/dist/
-client/dist/
+backend/dist/
+frontend/dist/
 
 # Environment variables (keep secrets out of Git)
 .env
 .env.local
 .env.*.local
-server/.env
-client/.env
+backend/.env
+frontend/.env
 
 # Logs & OS files
 *.log
@@ -21,4 +21,3 @@ npm-debug.log*
 .DS_Store
 Thumbs.db
 .vercel/
-

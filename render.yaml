@@ -2,7 +2,7 @@ services:
   - type: web
     name: aether-idp-backend
     runtime: node
-    rootDir: server
+    rootDir: backend
     plan: free
     buildCommand: npm install --include=dev && npm run build
     startCommand: npm start
@@ -22,4 +22,3 @@ services:
         sync: false
       - key: GEMINI_API_KEY
         sync: false
-

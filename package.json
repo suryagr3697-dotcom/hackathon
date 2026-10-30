@@ -4,13 +4,16 @@
   "private": true,
   "description": "Enterprise AI-Powered Intelligent Document Processing (IDP) Solution",
   "scripts": {
-    "dev": "concurrently \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
-    "dev:server": "npm run dev --prefix server",
-    "dev:client": "npm run dev --prefix client",
-    "build": "npm install --include=dev --prefix server && npm run build --prefix server && npm install --include=dev --prefix client && npm run build --prefix client",
-    "start": "npm run start --prefix server",
-    "migrate": "npm run migrate --prefix server",
-    "seed": "npm run seed --prefix server"
+    "dev": "concurrently \"npm run dev --prefix backend\" \"npm run dev --prefix frontend\"",
+    "dev:backend": "npm run dev --prefix backend",
+    "dev:frontend": "npm run dev --prefix frontend",
+    "build": "npm install --include=dev --prefix backend && npm run build --prefix backend && npm install --include=dev --prefix frontend && npm run build --prefix frontend",
+    "build:backend": "npm install --include=dev --prefix backend && npm run build --prefix backend",
+    "build:frontend": "npm install --include=dev --prefix frontend && npm run build --prefix frontend",
+    "start": "npm run start --prefix backend",
+    "migrate": "npm run migrate --prefix backend",
+    "seed": "npm run seed --prefix backend",
+    "verify": "npm run verify --prefix backend"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"
