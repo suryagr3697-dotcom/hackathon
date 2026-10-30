@@ -18,6 +18,7 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
+import { API_BASE_URL } from '../hooks/useIdpApi';
 
 export const Navbar: React.FC = () => {
   const {
@@ -46,7 +47,10 @@ export const Navbar: React.FC = () => {
     setAuthFeedback(null);
 
     try {
-      const endpoint = authMode === 'register' ? '/api/auth/register' : '/api/auth/login';
+      const endpoint =
+        authMode === 'register'
+          ? `${API_BASE_URL}/api/auth/register`
+          : `${API_BASE_URL}/api/auth/login`;
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -83,7 +87,7 @@ export const Navbar: React.FC = () => {
 
   const handleLogout = async () => {
     try {
-      await fetch('/api/auth/logout', {
+      await fetch(`${API_BASE_URL}/api/auth/logout`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${session.token}`,

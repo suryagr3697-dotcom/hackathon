@@ -122,6 +122,7 @@ export const FileUploadDropzone: React.FC<{ compact?: boolean }> = ({ compact = 
       });
       setLastIngestedDocId(result.document.id);
       setSelectedFile(null);
+      navigate(`/documents/${result.document.id}`);
     } catch (err) {
       setErrorMessage((err as Error).message || 'Failed to execute IDP extraction pipeline.');
     }

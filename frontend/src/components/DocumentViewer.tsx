@@ -18,6 +18,7 @@ import {
   LineItem,
   useUpdateDocumentMutation,
   useReprocessDocumentMutation,
+  API_BASE_URL,
 } from '../hooks/useIdpApi';
 import { ConfidenceBadge } from './ConfidenceBadge';
 import { useAppStore } from '../store/useAppStore';
@@ -159,7 +160,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({ document }) => {
   };
 
   const handleTriggerWebhook = async () => {
-    const res = await fetch('/api/webhooks/dispatch', {
+    const res = await fetch(`${API_BASE_URL}/api/webhooks/dispatch`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ documentId: document.id, format: 'JSON' }),
@@ -258,13 +259,33 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({ document }) => {
           </div>
 
           <div className="p-5 flex-1 bg-slate-950/50 overflow-y-auto space-y-4">
-            {document.preview_data_url && document.mime_type.startsWith('image/') ? (
-              <img
-                src={document.preview_data_url}
-                alt={document.file_name}
-                className="w-full rounded-xl border border-slate-800 object-contain max-h-[540px]"
-              />
-            ) : (
+            {(() => {
+              const sourceUrl =
+                document.preview_data_url || (document.extracted_data as any)?.fileUrl;
+              if (sourceUrl && document.mime_type.startsWith('image/')) {
+                return (
+                  <img
+                    src={sourceUrl}
+                    alt={document.file_name}
+                    className="w-full rounded-xl border border-slate-800 object-contain max-h-[620px]"
+                  />
+                );
+              }
+              if (sourceUrl && document.mime_type === 'application/pdf') {
+                return (
+                  <iframe
+                    src={sourceUrl}
+                    title={document.file_name}
+                    className="w-full h-[620px] rounded-xl border border-slate-800 bg-white"
+                  />
+                );
+              }
+              return null;
+            })()}
+            {!(
+              (document.preview_data_url || (document.extracted_data as any)?.fileUrl) &&
+              (document.mime_type.startsWith('image/') || document.mime_type === 'application/pdf')
+            ) && (
               /* Simulated High-Contrast Paper Sheet Preview of the Document */
               <div className="rounded-xl bg-white text-slate-900 p-6 shadow-2xl space-y-5 font-sans border border-slate-300">
                 <div className="flex items-start justify-between border-b border-slate-200 pb-4">

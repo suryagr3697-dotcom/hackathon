@@ -176,23 +176,25 @@ Classify the documentType (Invoice, TaxForm, Contract, MedicalRecord, Receipt, T
         const rawJson = response.text;
         if (rawJson) {
           const parsed = JSON.parse(rawJson);
-          return {
-            documentType: parsed.documentType || 'Invoice',
-            confidenceScore: Number(parsed.confidenceScore ?? 0.94),
-            entities: parsed.entities || {},
-            fieldConfidence: parsed.fieldConfidence || {
-              vendorOrIssuer: 0.97,
-              recipient: 0.96,
-              documentDate: 0.95,
-              totalAmount: 0.96,
-              currency: 0.99,
-              lineItems: 0.93,
-              summary: 0.95,
-            },
-          };
+          if (parsed && parsed.entities && Object.keys(parsed.entities).length > 0) {
+            return {
+              documentType: parsed.documentType || 'Invoice',
+              confidenceScore: Number(parsed.confidenceScore ?? 0.94),
+              entities: parsed.entities,
+              fieldConfidence: parsed.fieldConfidence || {
+                vendorOrIssuer: 0.97,
+                recipient: 0.96,
+                documentDate: 0.95,
+                totalAmount: 0.96,
+                currency: 0.99,
+                lineItems: 0.93,
+                summary: 0.95,
+              },
+            };
+          }
         }
-      } catch {
-        // try next candidate model silently
+      } catch (err) {
+        console.warn(`[IDP Pipeline] Model ${modelName} attempt notice:`, (err as Error).message);
       }
     }
   }
@@ -293,13 +295,18 @@ export async function processDocumentPipeline(params: {
   const startTime = Date.now();
   const storagePath = `${params.orgId}/${params.docId}_${params.fileName}`;
 
-  // 1. Upload binary to Supabase Storage if configured
+  // 1. Upload binary to Supabase Storage if configured and capture public URL
+  let publicStorageUrl: string | undefined;
   if (isSupabaseConfigured) {
     try {
       await supabaseAdmin.storage.from('documents').upload(storagePath, params.fileBuffer, {
         contentType: params.mimeType,
         upsert: true,
       });
+      const { data: pubData } = supabaseAdmin.storage.from('documents').getPublicUrl(storagePath);
+      if (pubData?.publicUrl) {
+        publicStorageUrl = pubData.publicUrl;
+      }
     } catch (err) {
       console.warn('[IDP Pipeline] Supabase storage upload note:', (err as Error).message);
     }
@@ -323,13 +330,20 @@ export async function processDocumentPipeline(params: {
   const status: DocumentRecord['processing_status'] =
     extraction.confidenceScore < threshold || minFieldScore < threshold ? 'needs_review' : 'completed';
 
-  // Generate a preview data URL for images or text files
-  let previewDataUrl: string | undefined;
-  if (params.mimeType.startsWith('image/') && params.fileBuffer.length < 4 * 1024 * 1024) {
+  // Generate a preview data URL for images, PDFs, or text files
+  let previewDataUrl: string | undefined = publicStorageUrl;
+  if (!previewDataUrl && params.mimeType.startsWith('image/') && params.fileBuffer.length < 6 * 1024 * 1024) {
     previewDataUrl = `data:${params.mimeType};base64,${params.fileBuffer.toString('base64')}`;
-  } else if (params.mimeType.startsWith('text/') && params.fileBuffer.length < 512 * 1024) {
+  } else if (!previewDataUrl && params.mimeType === 'application/pdf' && params.fileBuffer.length < 6 * 1024 * 1024) {
+    previewDataUrl = `data:application/pdf;base64,${params.fileBuffer.toString('base64')}`;
+  } else if (!previewDataUrl && params.mimeType.startsWith('text/') && params.fileBuffer.length < 512 * 1024) {
     previewDataUrl = `data:text/plain;base64,${params.fileBuffer.toString('base64')}`;
   }
+
+  const enrichedExtraction = {
+    ...extraction,
+    fileUrl: previewDataUrl,
+  };
 
   const record: DocumentRecord = {
     id: params.docId,
@@ -346,7 +360,7 @@ export async function processDocumentPipeline(params: {
     document_type: extraction.documentType,
     processing_status: status,
     overall_confidence: extraction.confidenceScore,
-    extracted_data: extraction,
+    extracted_data: enrichedExtraction,
     preview_data_url: previewDataUrl,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),

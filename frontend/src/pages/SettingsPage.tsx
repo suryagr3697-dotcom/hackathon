@@ -9,7 +9,7 @@ import {
   Plus,
   ShieldCheck,
 } from 'lucide-react';
-import { useSettingsQuery } from '../hooks/useIdpApi';
+import { useSettingsQuery, API_BASE_URL } from '../hooks/useIdpApi';
 import { useAppStore } from '../store/useAppStore';
 
 export const SettingsPage: React.FC = () => {
@@ -39,7 +39,7 @@ export const SettingsPage: React.FC = () => {
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     setStatusBanner(null);
-    const res = await fetch('/api/settings', {
+    const res = await fetch(`${API_BASE_URL}/api/settings`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -72,7 +72,7 @@ export const SettingsPage: React.FC = () => {
       },
     ];
 
-    const res = await fetch('/api/settings', {
+    const res = await fetch(`${API_BASE_URL}/api/settings`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ custom_schemas: updatedSchemas }),
@@ -86,7 +86,7 @@ export const SettingsPage: React.FC = () => {
 
   const handleRunMigrationRunner = async () => {
     setMigrationOutput('Running server/src/scripts/migrate.ts against Supabase...');
-    const res = await fetch('/api/admin/migrate', { method: 'POST' });
+    const res = await fetch(`${API_BASE_URL}/api/admin/migrate`, { method: 'POST' });
     const result = await res.json();
     setMigrationOutput(result.message || result.error || 'Migration runner finished.');
   };

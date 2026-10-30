@@ -69,6 +69,8 @@ export interface DocumentItem {
   updated_at: string;
 }
 
+export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+
 function getAuthHeaders(): HeadersInit {
   const { session } = useAppStore.getState();
   return {
@@ -92,7 +94,7 @@ export function useDocumentsQuery(filters?: {
       if (filters?.department && filters.department !== 'all') params.set('department', filters.department);
       if (filters?.search) params.set('search', filters.search);
 
-      const res = await fetch(`/api/documents?${params.toString()}`, {
+      const res = await fetch(`${API_BASE_URL}/api/documents?${params.toString()}`, {
         headers: getAuthHeaders(),
       });
       if (!res.ok) throw new Error('Failed to load documents');
@@ -109,7 +111,7 @@ export function useDocumentDetailQuery(id?: string) {
     queryKey: ['document', id],
     enabled: Boolean(id),
     queryFn: async () => {
-      const res = await fetch(`/api/documents/${id}`, {
+      const res = await fetch(`${API_BASE_URL}/api/documents/${id}`, {
         headers: getAuthHeaders(),
       });
       if (!res.ok) throw new Error('Document not found');
@@ -134,7 +136,7 @@ export function useUploadDocumentMutation() {
       formData.append('template', payload.template);
       formData.append('strictness', payload.strictness);
 
-      const res = await fetch('/api/documents/upload', {
+      const res = await fetch(`${API_BASE_URL}/api/documents/upload`, {
         method: 'POST',
         headers: getAuthHeaders(),
         body: formData,
@@ -166,7 +168,7 @@ export function useUpdateDocumentMutation() {
       // Validate with client-side Zod before sending
       const validated = DocumentUpdateZodSchema.parse(body);
 
-      const res = await fetch(`/api/documents/${id}`, {
+      const res = await fetch(`${API_BASE_URL}/api/documents/${id}`, {
         method: 'PUT',
         headers: {
           ...getAuthHeaders(),
@@ -192,7 +194,7 @@ export function useReprocessDocumentMutation() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (payload: { id: string; strictness: 'fast' | 'deep'; template: string }) => {
-      const res = await fetch(`/api/documents/${payload.id}/reprocess`, {
+      const res = await fetch(`${API_BASE_URL}/api/documents/${payload.id}/reprocess`, {
         method: 'POST',
         headers: {
           ...getAuthHeaders(),
@@ -219,7 +221,7 @@ export function useSemanticSearchMutation() {
   return useMutation({
     mutationFn: async (payload: { query: string; limit?: number }) => {
       const validated = SearchQueryZodSchema.parse(payload);
-      const res = await fetch('/api/search', {
+      const res = await fetch(`${API_BASE_URL}/api/search`, {
         method: 'POST',
         headers: {
           ...getAuthHeaders(),
@@ -260,7 +262,7 @@ export function useAnalyticsQuery() {
   return useQuery({
     queryKey: ['analytics'],
     queryFn: async () => {
-      const res = await fetch('/api/analytics', {
+      const res = await fetch(`${API_BASE_URL}/api/analytics`, {
         headers: getAuthHeaders(),
       });
       if (!res.ok) throw new Error('Failed to fetch analytics');
@@ -306,7 +308,7 @@ export function useSettingsQuery() {
   return useQuery({
     queryKey: ['settings'],
     queryFn: async () => {
-      const res = await fetch('/api/settings', {
+      const res = await fetch(`${API_BASE_URL}/api/settings`, {
         headers: getAuthHeaders(),
       });
       if (!res.ok) throw new Error('Failed to fetch settings');
