@@ -1,5 +1,6 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
+import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
 import { apiRouter } from './routes/api';
@@ -37,6 +38,19 @@ app.get('/api/health', (_req: Request, res: Response) => {
 
 // Mount API router
 app.use('/api', apiRouter);
+
+// Serve static frontend build in production if client/dist exists
+const clientDistPath = path.resolve(__dirname, '../../client/dist');
+if (fs.existsSync(clientDistPath)) {
+  app.use(express.static(clientDistPath));
+  app.get('*', (req: Request, res: Response, next: NextFunction) => {
+    if (req.path.startsWith('/api')) {
+      next();
+      return;
+    }
+    res.sendFile(path.join(clientDistPath, 'index.html'));
+  });
+}
 
 // Global Error Handler
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {

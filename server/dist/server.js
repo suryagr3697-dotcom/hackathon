@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
+const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const dotenv_1 = __importDefault(require("dotenv"));
 const api_1 = require("./routes/api");
@@ -34,6 +35,18 @@ app.get('/api/health', (_req, res) => {
 });
 // Mount API router
 app.use('/api', api_1.apiRouter);
+// Serve static frontend build in production if client/dist exists
+const clientDistPath = path_1.default.resolve(__dirname, '../../client/dist');
+if (fs_1.default.existsSync(clientDistPath)) {
+    app.use(express_1.default.static(clientDistPath));
+    app.get('*', (req, res, next) => {
+        if (req.path.startsWith('/api')) {
+            next();
+            return;
+        }
+        res.sendFile(path_1.default.join(clientDistPath, 'index.html'));
+    });
+}
 // Global Error Handler
 app.use((err, _req, res, _next) => {
     console.error('[Server Error]:', err.message);
