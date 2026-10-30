@@ -100,6 +100,25 @@ function getAuthHeaders(): HeadersInit {
   };
 }
 
+async function safeReadJson<T>(res: Response, defaultErrorMsg: string): Promise<T> {
+  const text = await res.text();
+  if (!text || !text.trim()) {
+    throw new Error(`${defaultErrorMsg} (Server returned an empty response)`);
+  }
+  try {
+    const parsed = JSON.parse(text);
+    if (!res.ok) {
+      throw new Error(parsed?.error || defaultErrorMsg);
+    }
+    return parsed as T;
+  } catch (err) {
+    if (!res.ok && (err as Error).message !== `Unexpected token`) {
+      throw err;
+    }
+    throw new Error(defaultErrorMsg);
+  }
+}
+
 export function useDocumentsQuery(filters?: {
   status?: string;
   type?: string;
@@ -118,11 +137,10 @@ export function useDocumentsQuery(filters?: {
       const res = await fetch(`${API_BASE_URL}/api/documents?${params.toString()}`, {
         headers: getAuthHeaders(),
       });
-      if (!res.ok) throw new Error('Failed to load documents');
-      return res.json() as Promise<{
+      return safeReadJson<{
         documents: DocumentItem[];
         pagination: { total: number; page: number; limit: number; totalPages: number };
-      }>;
+      }>(res, 'Failed to load documents');
     },
   });
 }
@@ -135,9 +153,8 @@ export function useDocumentDetailQuery(id?: string) {
       const res = await fetch(`${API_BASE_URL}/api/documents/${id}`, {
         headers: getAuthHeaders(),
       });
-      if (!res.ok) throw new Error('Document not found');
-      const data = await res.json();
-      return data.document as DocumentItem;
+      const data = await safeReadJson<{ document: DocumentItem }>(res, 'Document not found');
+      return data.document;
     },
   });
 }
@@ -162,11 +179,7 @@ export function useUploadDocumentMutation() {
         headers: getAuthHeaders(),
         body: formData,
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: 'Upload failed' }));
-        throw new Error(err.error || 'Upload failed');
-      }
-      return res.json() as Promise<{ message: string; document: DocumentItem }>;
+      return safeReadJson<{ message: string; document: DocumentItem }>(res, 'Upload failed');
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['documents'] });
@@ -197,11 +210,10 @@ export function useUpdateDocumentMutation() {
         },
         body: JSON.stringify(validated),
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: 'Failed to update document' }));
-        throw new Error(err.error || 'Failed to update document');
-      }
-      return res.json() as Promise<{ message: string; document: DocumentItem }>;
+      return safeReadJson<{ message: string; document: DocumentItem }>(
+        res,
+        'Failed to update document'
+      );
     },
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['document', variables.id] });
@@ -226,8 +238,7 @@ export function useReprocessDocumentMutation() {
           template: payload.template,
         }),
       });
-      if (!res.ok) throw new Error('Reprocessing failed');
-      return res.json() as Promise<{ message: string; document: DocumentItem }>;
+      return safeReadJson<{ message: string; document: DocumentItem }>(res, 'Reprocessing failed');
     },
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['document', variables.id] });
@@ -249,11 +260,7 @@ export function useMcpSummarizeMutation() {
         },
         body: JSON.stringify({ focusPrompt: payload.focusPrompt }),
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: 'MCP Summarization failed' }));
-        throw new Error(err.error || 'MCP Summarization failed');
-      }
-      return res.json() as Promise<{
+      return safeReadJson<{
         message: string;
         mcpSummary: {
           documentId: string;
@@ -267,7 +274,7 @@ export function useMcpSummarizeMutation() {
           mcpProtocolVersion: string;
           mcpToolTrace: McpToolCallTrace[];
         };
-      }>;
+      }>(res, 'MCP Summarization failed');
     },
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['document', variables.id] });
@@ -290,11 +297,7 @@ export function useSemanticSearchMutation() {
         },
         body: JSON.stringify(validated),
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: 'Search failed' }));
-        throw new Error(err.error || 'Search failed');
-      }
-      return res.json() as Promise<{
+      return safeReadJson<{
         query: string;
         answer: string;
         citations: Array<{
@@ -313,7 +316,7 @@ export function useSemanticSearchMutation() {
         embeddingModel: string;
         vectorDimensions: number;
         latencyMs: number;
-      }>;
+      }>(res, 'Search failed');
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['analytics'] });
@@ -328,8 +331,7 @@ export function useAnalyticsQuery() {
       const res = await fetch(`${API_BASE_URL}/api/analytics`, {
         headers: getAuthHeaders(),
       });
-      if (!res.ok) throw new Error('Failed to fetch analytics');
-      return res.json() as Promise<{
+      return safeReadJson<{
         summary: {
           totalDocuments: number;
           completedDocs: number;
@@ -362,7 +364,7 @@ export function useAnalyticsQuery() {
           details: Record<string, any>;
           created_at: string;
         }>;
-      }>;
+      }>(res, 'Failed to fetch analytics');
     },
   });
 }
@@ -374,8 +376,7 @@ export function useSettingsQuery() {
       const res = await fetch(`${API_BASE_URL}/api/settings`, {
         headers: getAuthHeaders(),
       });
-      if (!res.ok) throw new Error('Failed to fetch settings');
-      return res.json() as Promise<{
+      return safeReadJson<{
         organization: {
           id: string;
           name: string;
@@ -397,7 +398,7 @@ export function useSettingsQuery() {
           embeddingModel: string;
           vectorDimensions: number;
         };
-      }>;
+      }>(res, 'Failed to fetch settings');
     },
   });
 }
