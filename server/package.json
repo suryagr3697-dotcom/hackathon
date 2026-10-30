@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx src/server.ts",
     "dev:watch": "tsx watch src/server.ts",
-    "build": "tsc",
+    "build": "node ./node_modules/typescript/bin/tsc",
     "start": "node dist/server.js",
     "migrate": "tsx src/scripts/migrate.ts",
     "seed": "tsx src/scripts/migrate.ts --seed-only",
