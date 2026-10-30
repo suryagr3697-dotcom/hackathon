@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   Building2,
   Sparkles,
@@ -16,11 +16,15 @@ import {
   Loader2,
   CheckCircle2,
   AlertCircle,
+  Crown,
+  FileCheck2,
+  Eye,
 } from 'lucide-react';
-import { useAppStore } from '../store/useAppStore';
+import { useAppStore, AppRole } from '../store/useAppStore';
 import { API_BASE_URL } from '../hooks/useIdpApi';
 
 export const Navbar: React.FC = () => {
+  const navigate = useNavigate();
   const {
     session,
     strictnessMode,
@@ -31,11 +35,12 @@ export const Navbar: React.FC = () => {
     logoutSession,
   } = useAppStore();
 
-  const [authMode, setAuthMode] = useState<'login' | 'register'>('register');
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [emailInput, setEmailInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
   const [nameInput, setNameInput] = useState('');
   const [orgInput, setOrgInput] = useState('Apex Global Enterprises');
+  const [selectedRole, setSelectedRole] = useState<AppRole>('admin');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [authFeedback, setAuthFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(
     null
@@ -59,6 +64,7 @@ export const Navbar: React.FC = () => {
           password: passwordInput,
           fullName: nameInput,
           orgName: orgInput,
+          role: selectedRole,
         }),
       });
       const data = await res.json();
@@ -69,12 +75,12 @@ export const Navbar: React.FC = () => {
       setSession(data.session);
       setAuthFeedback({
         type: 'success',
-        text: data.message || 'Authenticated with Supabase Cloud!',
+        text: data.message || 'Authenticated successfully!',
       });
       setTimeout(() => {
         setAuthModalOpen(false);
         setAuthFeedback(null);
-      }, 900);
+      }, 700);
     } catch (err) {
       setAuthFeedback({
         type: 'error',
@@ -82,6 +88,30 @@ export const Navbar: React.FC = () => {
       });
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleRoleSwitch = async (newRole: AppRole) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/auth/role`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.token}`,
+          'x-org-id': session.orgId,
+        },
+        body: JSON.stringify({ role: newRole }),
+      });
+      const data = await res.json();
+      if (res.ok && data.session) {
+        setSession(data.session);
+      }
+    } catch {
+      // Fallback local role update
+      setSession({
+        ...session,
+        role: newRole,
+      });
     }
   };
 
@@ -98,11 +128,16 @@ export const Navbar: React.FC = () => {
       // ignore
     }
     logoutSession();
-    setAuthMode('login');
-    setAuthModalOpen(true);
+    navigate('/login');
   };
 
-  const isSignedOut = session.isAuthenticated === false || !session.token;
+  const isSignedOut = !session.isAuthenticated || !session.token;
+
+  const roleBadgeStyles: Record<AppRole, string> = {
+    admin: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
+    reviewer: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40',
+    viewer: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+  };
 
   return (
     <>
@@ -121,66 +156,96 @@ export const Navbar: React.FC = () => {
                 </span>
               </div>
               <p className="text-[11px] text-slate-400 hidden sm:block">
-                Gemini Multimodal Extraction & pgvector RAG
+                MCP Document Summarization & Zero-Hallucination Q&A
               </p>
             </div>
           </Link>
 
-          <div className="hidden md:flex items-center gap-2 pl-4 border-l border-slate-800">
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-300">
-              <Building2 className="w-3.5 h-3.5 text-indigo-400" />
-              <span className="font-medium">{session.orgName}</span>
-              <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-mono">
-                RLS Isolated
+          {!isSignedOut && (
+            <div className="hidden md:flex items-center gap-2 pl-4 border-l border-slate-800">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-300">
+                <Building2 className="w-3.5 h-3.5 text-indigo-400" />
+                <span className="font-medium">{session.orgName}</span>
+                <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-mono">
+                  RLS Isolated
+                </span>
               </span>
-            </span>
-          </div>
+            </div>
+          )}
         </div>
 
-        {/* Right: AI Strictness Switcher & Authenticated Profile */}
+        {/* Right: RBAC Switcher, AI Strictness Switcher & Authenticated Profile */}
         <div className="flex items-center gap-2.5">
-          {/* Fast vs Deep Strictness Toggle */}
-          <div className="hidden sm:flex items-center bg-slate-900 p-1 rounded-xl border border-slate-800">
-            <button
-              type="button"
-              onClick={() => setStrictnessMode('fast')}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
-                strictnessMode === 'fast'
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-              title="Fast Extraction using gemini-2.5-flash"
-            >
-              <Zap className="w-3.5 h-3.5" />
-              <span>2.5 Flash</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setStrictnessMode('deep')}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
-                strictnessMode === 'deep'
-                  ? 'bg-violet-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-              title="Deep Financial/Legal Analysis using gemini-2.5-pro"
-            >
-              <BrainCircuit className="w-3.5 h-3.5" />
-              <span>2.5 Pro Deep</span>
-            </button>
-          </div>
+          {!isSignedOut && (
+            <>
+              {/* Live RBAC Role Switcher (Admin / Reviewer / Viewer) */}
+              <div
+                className="hidden xl:flex items-center bg-slate-900 p-1 rounded-xl border border-slate-800"
+                title="Switch Role-Based Access Control (RBAC) Authorization Level"
+              >
+                <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold px-2">
+                  RBAC:
+                </span>
+                {(['admin', 'reviewer', 'viewer'] as AppRole[]).map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    onClick={() => handleRoleSwitch(r)}
+                    className={`px-2 py-1 rounded-lg text-[11px] font-semibold uppercase transition-all ${
+                      session.role === r
+                        ? r === 'admin'
+                          ? 'bg-amber-500 text-slate-950 shadow-sm'
+                          : r === 'reviewer'
+                            ? 'bg-indigo-600 text-white shadow-sm'
+                            : 'bg-emerald-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
+
+              {/* Fast vs Deep Strictness Toggle */}
+              <div className="hidden sm:flex items-center bg-slate-900 p-1 rounded-xl border border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setStrictnessMode('fast')}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                    strictnessMode === 'fast'
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                  title="Fast Extraction using gemini-2.5-flash"
+                >
+                  <Zap className="w-3.5 h-3.5" />
+                  <span>2.5 Flash</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStrictnessMode('deep')}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                    strictnessMode === 'deep'
+                      ? 'bg-violet-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                  title="Deep Financial/Legal Analysis using gemini-2.5-pro"
+                >
+                  <BrainCircuit className="w-3.5 h-3.5" />
+                  <span>2.5 Pro Deep</span>
+                </button>
+              </div>
+            </>
+          )}
 
           {isSignedOut ? (
-            <button
-              type="button"
-              onClick={() => {
-                setAuthMode('login');
-                setAuthModalOpen(true);
-              }}
+            <Link
+              to="/login"
               className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-600/20"
             >
               <LogIn className="w-3.5 h-3.5" />
               <span>Sign In / Register</span>
-            </button>
+            </Link>
           ) : (
             <div className="flex items-center gap-2">
               <button
@@ -197,8 +262,17 @@ export const Navbar: React.FC = () => {
                     .toUpperCase()}
                 </div>
                 <div className="text-left hidden lg:block">
-                  <div className="text-xs font-semibold text-slate-200 leading-none">
-                    {session.fullName}
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-semibold text-slate-200 leading-none">
+                      {session.fullName}
+                    </span>
+                    <span
+                      className={`text-[9px] font-mono uppercase px-1.5 py-0.5 rounded border ${
+                        roleBadgeStyles[session.role] || roleBadgeStyles.reviewer
+                      }`}
+                    >
+                      {session.role}
+                    </span>
                   </div>
                   <div className="text-[10px] text-emerald-400 flex items-center gap-1 mt-0.5">
                     <ShieldCheck className="w-3 h-3" />
@@ -220,7 +294,7 @@ export const Navbar: React.FC = () => {
         </div>
       </header>
 
-      {/* Supabase Auth Registration / Login Modal */}
+      {/* Account & RBAC Authorization Modal */}
       {authModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-md rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl overflow-hidden">
@@ -228,7 +302,7 @@ export const Navbar: React.FC = () => {
               <div className="flex items-center gap-2">
                 <Lock className="w-4 h-4 text-indigo-400" />
                 <h3 className="font-semibold text-white text-sm">
-                  Supabase Cloud Authentication & RLS
+                  Identity & RBAC Authorization
                 </h3>
               </div>
               <button
@@ -238,6 +312,37 @@ export const Navbar: React.FC = () => {
                 <X className="w-4 h-4" />
               </button>
             </div>
+
+            {!isSignedOut && (
+              <div className="px-6 py-3 bg-slate-950/80 border-b border-slate-800 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-slate-400">Active RBAC Role:</span>
+                  <span
+                    className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded border ${
+                      roleBadgeStyles[session.role]
+                    }`}
+                  >
+                    {session.roleLabel} ({session.role.toUpperCase()})
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-1.5 pt-1">
+                  {(['admin', 'reviewer', 'viewer'] as AppRole[]).map((r) => (
+                    <button
+                      key={r}
+                      type="button"
+                      onClick={() => handleRoleSwitch(r)}
+                      className={`py-1.5 rounded-lg text-xs font-semibold uppercase border transition-all ${
+                        session.role === r
+                          ? 'bg-indigo-600 border-indigo-500 text-white'
+                          : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Set {r}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Mode Switcher */}
             <div className="grid grid-cols-2 p-2 bg-slate-950 border-b border-slate-800">
@@ -254,7 +359,7 @@ export const Navbar: React.FC = () => {
                 }`}
               >
                 <UserPlus className="w-3.5 h-3.5" />
-                Register New Account
+                Register Account
               </button>
               <button
                 type="button"
@@ -269,7 +374,7 @@ export const Navbar: React.FC = () => {
                 }`}
               >
                 <LogIn className="w-3.5 h-3.5" />
-                Sign In Existing User
+                Sign In User
               </button>
             </div>
 
@@ -301,12 +406,41 @@ export const Navbar: React.FC = () => {
                       required
                     />
                   </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-400 mb-1">
+                      RBAC Role
+                    </label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { role: 'admin' as AppRole, label: 'Admin', icon: Crown },
+                        { role: 'reviewer' as AppRole, label: 'Reviewer', icon: FileCheck2 },
+                        { role: 'viewer' as AppRole, label: 'Viewer', icon: Eye },
+                      ].map((item) => {
+                        const Icon = item.icon;
+                        return (
+                          <button
+                            key={item.role}
+                            type="button"
+                            onClick={() => setSelectedRole(item.role)}
+                            className={`p-2 rounded-lg border text-xs font-semibold flex items-center justify-center gap-1 ${
+                              selectedRole === item.role
+                                ? 'bg-indigo-600/20 border-indigo-500 text-white'
+                                : 'bg-slate-950 border-slate-800 text-slate-400'
+                            }`}
+                          >
+                            <Icon className="w-3.5 h-3.5 text-indigo-400" />
+                            <span>{item.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </>
               )}
 
               <div>
                 <label className="block text-xs font-medium text-slate-400 mb-1">
-                  Email Address (Supabase Auth)
+                  Email Address
                 </label>
                 <input
                   type="email"
@@ -350,21 +484,13 @@ export const Navbar: React.FC = () => {
                 </div>
               )}
 
-              <div className="p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-xs text-indigo-200 flex items-start gap-2">
-                <KeyRound className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
-                <span>
-                  Creates a real user in <strong>Supabase Dashboard → Authentication</strong> and
-                  provisions your linked record in `public.profiles`.
-                </span>
-              </div>
-
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
                   onClick={() => setAuthModalOpen(false)}
                   className="px-4 py-2 rounded-lg bg-slate-800 text-slate-300 text-xs font-medium hover:bg-slate-700"
                 >
-                  Cancel
+                  Close
                 </button>
                 <button
                   type="submit"

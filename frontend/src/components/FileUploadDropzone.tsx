@@ -62,6 +62,9 @@ export const FileUploadDropzone: React.FC<{ compact?: boolean }> = ({ compact = 
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const {
+    session,
+    hasPermission,
+    setAuthModalOpen,
     strictnessMode,
     setStrictnessMode,
     selectedTemplate,
@@ -69,6 +72,8 @@ export const FileUploadDropzone: React.FC<{ compact?: boolean }> = ({ compact = 
     selectedDepartment,
     setSelectedDepartment,
   } = useAppStore();
+
+  const canUpload = hasPermission('upload:documents');
 
   const uploadMutation = useUploadDocumentMutation();
   const [isDragging, setIsDragging] = useState(false);
@@ -138,6 +143,21 @@ export const FileUploadDropzone: React.FC<{ compact?: boolean }> = ({ compact = 
 
   return (
     <div className="rounded-2xl bg-slate-900/90 border border-slate-800 p-5 space-y-4 shadow-xl">
+      {!canUpload && (
+        <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-3">
+          <div className="text-xs text-amber-200">
+            <strong>RBAC Read-Only Mode ({session.roleLabel}):</strong> Document upload is restricted
+            to <strong>Admin</strong> and <strong>Reviewer</strong> roles.
+          </div>
+          <button
+            type="button"
+            onClick={() => setAuthModalOpen(true)}
+            className="px-3 py-1.5 rounded-lg bg-amber-500 text-slate-950 text-xs font-bold hover:bg-amber-400 shrink-0"
+          >
+            Switch Role
+          </button>
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold text-white flex items-center gap-2">

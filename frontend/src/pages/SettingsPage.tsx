@@ -14,8 +14,17 @@ import { useAppStore } from '../store/useAppStore';
 
 export const SettingsPage: React.FC = () => {
   const { data, refetch } = useSettingsQuery();
-  const { confidenceThreshold, setConfidenceThreshold, strictnessMode, setStrictnessMode } =
-    useAppStore();
+  const {
+    session,
+    hasPermission,
+    setAuthModalOpen,
+    confidenceThreshold,
+    setConfidenceThreshold,
+    strictnessMode,
+    setStrictnessMode,
+  } = useAppStore();
+
+  const isAdmin = hasPermission('manage:settings');
 
   const [orgName, setOrgName] = useState('Apex Global Enterprises');
   const [webhookUrl, setWebhookUrl] = useState(
@@ -41,7 +50,12 @@ export const SettingsPage: React.FC = () => {
     setStatusBanner(null);
     const res = await fetch(`${API_BASE_URL}/api/settings`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.token}`,
+        'x-org-id': session.orgId,
+        'x-user-role': session.role,
+      },
       body: JSON.stringify({
         name: orgName,
         webhook_url: webhookUrl,
@@ -49,9 +63,12 @@ export const SettingsPage: React.FC = () => {
         confidence_threshold: confidenceThreshold,
       }),
     });
+    const resData = await res.json();
     if (res.ok) {
       setStatusBanner('Organization configuration, strictness policy, and webhook URL saved!');
       refetch();
+    } else {
+      setStatusBanner(resData.error || 'Failed to save settings (Admin role required).');
     }
   };
 
@@ -74,19 +91,34 @@ export const SettingsPage: React.FC = () => {
 
     const res = await fetch(`${API_BASE_URL}/api/settings`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.token}`,
+        'x-org-id': session.orgId,
+        'x-user-role': session.role,
+      },
       body: JSON.stringify({ custom_schemas: updatedSchemas }),
     });
+    const resData = await res.json();
     if (res.ok) {
       setNewSchemaName('');
       setStatusBanner(`Added custom extraction profile "${newSchemaName}"!`);
       refetch();
+    } else {
+      setStatusBanner(resData.error || 'Failed to add custom schema (Admin role required).');
     }
   };
 
   const handleRunMigrationRunner = async () => {
-    setMigrationOutput('Running server/src/scripts/migrate.ts against Supabase...');
-    const res = await fetch(`${API_BASE_URL}/api/admin/migrate`, { method: 'POST' });
+    setMigrationOutput('Running backend/src/scripts/migrate.ts against Supabase...');
+    const res = await fetch(`${API_BASE_URL}/api/admin/migrate`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${session.token}`,
+        'x-org-id': session.orgId,
+        'x-user-role': session.role,
+      },
+    });
     const result = await res.json();
     setMigrationOutput(result.message || result.error || 'Migration runner finished.');
   };
@@ -96,6 +128,22 @@ export const SettingsPage: React.FC = () => {
 
   return (
     <div className="space-y-6 pb-12">
+      {!isAdmin && (
+        <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-4">
+          <div className="text-xs text-amber-200">
+            <strong>RBAC Authorization Notice ({session.roleLabel}):</strong> Only users with the{' '}
+            <strong>Organization Admin (ADMIN)</strong> role are authorized to modify organization
+            settings, custom schemas, or run database migrations.
+          </div>
+          <button
+            type="button"
+            onClick={() => setAuthModalOpen(true)}
+            className="px-3.5 py-1.5 rounded-lg bg-amber-500 text-slate-950 text-xs font-bold hover:bg-amber-400 shrink-0"
+          >
+            Switch to Admin Role
+          </button>
+        </div>
+      )}
       <div>
         <h1 className="text-2xl font-bold text-white tracking-tight flex items-center gap-2">
           <Settings className="w-6 h-6 text-indigo-400" />

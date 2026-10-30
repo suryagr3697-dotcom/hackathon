@@ -3,16 +3,23 @@ import crypto from 'crypto';
 import { createClient } from '@supabase/supabase-js';
 import { supabaseAdmin, isSupabaseConfigured } from '../config/supabase';
 import { DEFAULT_ORG_ID, localStore } from '../config/localStore';
-import { AuthenticatedRequest } from '../middleware/authAndValidation';
+import {
+  AuthenticatedRequest,
+  AppRole,
+  normalizeRole,
+  getRoleDisplayName,
+  ROLE_PERMISSIONS,
+  createSignedAppToken,
+} from '../middleware/authAndValidation';
 
 /**
  * POST /api/auth/register
- * Registers a real user in Supabase Auth (with auto-confirmed email),
- * creates/links their Organization in `organizations`, and creates their Profile in `profiles`.
+ * Registers a user in Supabase Auth, creates/links their Organization in `organizations`,
+ * and provisions their RBAC Role (`admin`, `reviewer`, or `viewer`) in `profiles`.
  */
 export async function registerUser(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
-    const { email, password, fullName, orgName } = req.body;
+    const { email, password, fullName, orgName, role } = req.body;
     if (!email || !password) {
       res.status(400).json({ error: 'Email and password are required.' });
       return;
@@ -21,9 +28,9 @@ export async function registerUser(req: AuthenticatedRequest, res: Response): Pr
     const cleanEmail = String(email).trim().toLowerCase();
     const cleanName = String(fullName || cleanEmail.split('@')[0]).trim();
     const cleanOrgName = String(orgName || 'Apex Global Enterprises').trim();
+    const assignedRole: AppRole = normalizeRole(role || 'reviewer');
 
     if (isSupabaseConfigured) {
-      // 1. Ensure organization exists or create new one if custom org name provided
       let targetOrgId = DEFAULT_ORG_ID;
       if (cleanOrgName.toLowerCase() !== 'apex global enterprises') {
         const { data: existingOrg } = await supabaseAdmin
@@ -46,7 +53,6 @@ export async function registerUser(req: AuthenticatedRequest, res: Response): Pr
         }
       }
 
-      // 2. Create user in Supabase Auth using a stateless Admin client (so we do not mutate supabaseAdmin's service_role header)
       const statelessAuthClient = createClient(
         process.env.SUPABASE_URL || '',
         process.env.SUPABASE_SERVICE_ROLE_KEY || '',
@@ -60,7 +66,7 @@ export async function registerUser(req: AuthenticatedRequest, res: Response): Pr
         user_metadata: {
           full_name: cleanName,
           org_id: targetOrgId,
-          role: 'senior_analyst',
+          role: assignedRole,
         },
       });
 
@@ -69,7 +75,6 @@ export async function registerUser(req: AuthenticatedRequest, res: Response): Pr
         return;
       }
 
-      // 3. Sign in with password on the isolated client to obtain live Supabase JWT session
       const { data: signInData, error: signInErr } = await statelessAuthClient.auth.signInWithPassword({
         email: cleanEmail,
         password: String(password),
@@ -80,20 +85,18 @@ export async function registerUser(req: AuthenticatedRequest, res: Response): Pr
         return;
       }
 
-      const userId = signInData.user.id || createdAuth?.user?.id;
+      const userId = signInData.user.id || createdAuth?.user?.id || crypto.randomUUID();
 
-      // 4. Upsert into `profiles` table explicitly to guarantee persistence
       await supabaseAdmin.from('profiles').upsert(
         {
           id: userId,
           org_id: targetOrgId,
           full_name: cleanName,
-          role: 'senior_analyst',
+          role: assignedRole,
         },
         { onConflict: 'id' }
       );
 
-      // 5. Log registration event in `audit_logs`
       await supabaseAdmin.from('audit_logs').insert({
         org_id: targetOrgId,
         user_id: userId,
@@ -102,35 +105,61 @@ export async function registerUser(req: AuthenticatedRequest, res: Response): Pr
           email: cleanEmail,
           fullName: cleanName,
           orgName: cleanOrgName,
+          role: assignedRole,
+          permissions: ROLE_PERMISSIONS[assignedRole],
         },
       });
 
+      const appToken = createSignedAppToken({
+        id: userId,
+        email: cleanEmail,
+        fullName: cleanName,
+        role: assignedRole,
+        orgId: targetOrgId,
+        orgName: cleanOrgName,
+      });
+
       res.status(201).json({
-        message: 'Account registered and verified in Supabase Auth!',
+        message: `Account registered as ${getRoleDisplayName(assignedRole)}!`,
         session: {
           id: userId,
           email: cleanEmail,
           fullName: cleanName,
-          role: 'Senior Analyst',
+          role: assignedRole,
+          roleLabel: getRoleDisplayName(assignedRole),
+          permissions: ROLE_PERMISSIONS[assignedRole],
           orgId: targetOrgId,
           orgName: cleanOrgName,
-          token: signInData.session?.access_token || 'supabase-jwt-token',
+          token: signInData.session?.access_token || appToken,
+          isAuthenticated: true,
         },
       });
       return;
     }
 
-    // Fallback if offline
+    const fallbackId = crypto.randomUUID();
+    const fallbackToken = createSignedAppToken({
+      id: fallbackId,
+      email: cleanEmail,
+      fullName: cleanName,
+      role: assignedRole,
+      orgId: DEFAULT_ORG_ID,
+      orgName: cleanOrgName,
+    });
+
     res.status(201).json({
-      message: 'Account registered in local store',
+      message: `Account registered as ${getRoleDisplayName(assignedRole)}`,
       session: {
-        id: crypto.randomUUID(),
+        id: fallbackId,
         email: cleanEmail,
         fullName: cleanName,
-        role: 'Senior Analyst',
+        role: assignedRole,
+        roleLabel: getRoleDisplayName(assignedRole),
+        permissions: ROLE_PERMISSIONS[assignedRole],
         orgId: DEFAULT_ORG_ID,
         orgName: cleanOrgName,
-        token: 'demo-enterprise-jwt-token',
+        token: fallbackToken,
+        isAuthenticated: true,
       },
     });
   } catch (error) {
@@ -140,11 +169,74 @@ export async function registerUser(req: AuthenticatedRequest, res: Response): Pr
 
 /**
  * POST /api/auth/login
- * Authenticates an existing user against Supabase Auth and retrieves their `profiles` & `organizations` record.
+ * Authenticates an existing user or quick-role demo account and returns their RBAC session + permissions.
  */
 export async function loginUser(req: AuthenticatedRequest, res: Response): Promise<void> {
   try {
-    const { email, password } = req.body;
+    const { email, password, quickRole, role } = req.body;
+
+    // Support instant RBAC Role Demo Login (Admin / Reviewer / Viewer)
+    if (quickRole) {
+      const targetRole: AppRole = normalizeRole(quickRole);
+      const demoProfiles: Record<AppRole, { id: string; email: string; fullName: string }> = {
+        admin: {
+          id: '00000000-0000-0000-0000-000000000001',
+          email: 'admin@apex-enterprise.io',
+          fullName: 'Dr. Elena Vance (Admin)',
+        },
+        reviewer: {
+          id: '00000000-0000-0000-0000-000000000002',
+          email: 'reviewer@apex-enterprise.io',
+          fullName: 'Marcus Chen (Reviewer)',
+        },
+        viewer: {
+          id: '00000000-0000-0000-0000-000000000003',
+          email: 'auditor@apex-enterprise.io',
+          fullName: 'Sarah Jenkins (Viewer)',
+        },
+      };
+
+      const chosen = demoProfiles[targetRole];
+      const token = createSignedAppToken({
+        id: chosen.id,
+        email: chosen.email,
+        fullName: chosen.fullName,
+        role: targetRole,
+        orgId: DEFAULT_ORG_ID,
+        orgName: 'Apex Global Enterprises',
+      });
+
+      if (isSupabaseConfigured) {
+        await supabaseAdmin.from('audit_logs').insert({
+          org_id: DEFAULT_ORG_ID,
+          user_id: null,
+          action: 'USER_RBAC_SESSION_LOGIN',
+          details: {
+            email: chosen.email,
+            role: targetRole,
+            roleLabel: getRoleDisplayName(targetRole),
+          },
+        });
+      }
+
+      res.json({
+        message: `Signed in as ${getRoleDisplayName(targetRole)}`,
+        session: {
+          id: chosen.id,
+          email: chosen.email,
+          fullName: chosen.fullName,
+          role: targetRole,
+          roleLabel: getRoleDisplayName(targetRole),
+          permissions: ROLE_PERMISSIONS[targetRole],
+          orgId: DEFAULT_ORG_ID,
+          orgName: 'Apex Global Enterprises',
+          token,
+          isAuthenticated: true,
+        },
+      });
+      return;
+    }
+
     if (!email || !password) {
       res.status(400).json({ error: 'Email and password are required.' });
       return;
@@ -175,6 +267,24 @@ export async function loginUser(req: AuthenticatedRequest, res: Response): Promi
         .maybeSingle();
 
       const orgId = profile?.org_id || DEFAULT_ORG_ID;
+      const resolvedRole: AppRole = normalizeRole(
+        role || profile?.role || data.user.user_metadata?.role || 'reviewer'
+      );
+
+      if (role && role !== profile?.role) {
+        await supabaseAdmin
+          .from('profiles')
+          .upsert(
+            {
+              id: data.user.id,
+              org_id: orgId,
+              full_name:
+                profile?.full_name || data.user.user_metadata?.full_name || cleanEmail.split('@')[0],
+              role: resolvedRole,
+            },
+            { onConflict: 'id' }
+          );
+      }
 
       const { data: orgData } = await supabaseAdmin
         .from('organizations')
@@ -186,34 +296,155 @@ export async function loginUser(req: AuthenticatedRequest, res: Response): Promi
         org_id: orgId,
         user_id: data.user.id,
         action: 'USER_SESSION_LOGIN',
-        details: { email: cleanEmail },
+        details: {
+          email: cleanEmail,
+          role: resolvedRole,
+          permissions: ROLE_PERMISSIONS[resolvedRole],
+        },
+      });
+
+      const fullName =
+        profile?.full_name || data.user.user_metadata?.full_name || cleanEmail.split('@')[0];
+      const orgName = orgData?.name || 'Apex Global Enterprises';
+
+      const appToken = createSignedAppToken({
+        id: data.user.id,
+        email: cleanEmail,
+        fullName,
+        role: resolvedRole,
+        orgId,
+        orgName,
       });
 
       res.json({
-        message: 'Authenticated successfully via Supabase Auth!',
+        message: `Authenticated as ${getRoleDisplayName(resolvedRole)}!`,
         session: {
           id: data.user.id,
           email: cleanEmail,
-          fullName: profile?.full_name || data.user.user_metadata?.full_name || cleanEmail.split('@')[0],
-          role: profile?.role || 'Senior Analyst',
+          fullName,
+          role: resolvedRole,
+          roleLabel: getRoleDisplayName(resolvedRole),
+          permissions: ROLE_PERMISSIONS[resolvedRole],
           orgId,
-          orgName: orgData?.name || 'Apex Global Enterprises',
-          token: data.session?.access_token || 'supabase-jwt-token',
+          orgName,
+          token: data.session?.access_token || appToken,
+          isAuthenticated: true,
         },
       });
       return;
     }
 
+    const fallbackRole: AppRole = cleanEmail.includes('admin')
+      ? 'admin'
+      : cleanEmail.includes('view') || cleanEmail.includes('audit')
+        ? 'viewer'
+        : 'reviewer';
+
+    const fallbackToken = createSignedAppToken({
+      id: '00000000-0000-0000-0000-000000000001',
+      email: cleanEmail,
+      fullName: cleanEmail.split('@')[0],
+      role: fallbackRole,
+      orgId: DEFAULT_ORG_ID,
+      orgName: localStore.organization.name,
+    });
+
     res.json({
-      message: 'Logged in',
+      message: `Signed in as ${getRoleDisplayName(fallbackRole)}`,
       session: {
         id: '00000000-0000-0000-0000-000000000001',
         email: cleanEmail,
         fullName: cleanEmail.split('@')[0],
-        role: 'Senior Analyst',
+        role: fallbackRole,
+        roleLabel: getRoleDisplayName(fallbackRole),
+        permissions: ROLE_PERMISSIONS[fallbackRole],
         orgId: DEFAULT_ORG_ID,
         orgName: localStore.organization.name,
-        token: 'demo-enterprise-jwt-token',
+        token: fallbackToken,
+        isAuthenticated: true,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ error: (error as Error).message });
+  }
+}
+
+/**
+ * GET /api/auth/me
+ * Returns current authenticated user profile, active RBAC role, and granted permissions.
+ */
+export async function getCurrentUser(req: AuthenticatedRequest, res: Response): Promise<void> {
+  if (!req.user) {
+    res.status(401).json({ error: 'Not authenticated' });
+    return;
+  }
+  res.json({
+    user: {
+      id: req.user.id,
+      email: req.user.email,
+      fullName: req.user.full_name,
+      role: req.user.role,
+      roleLabel: req.user.role_label,
+      permissions: req.user.permissions,
+      orgId: req.user.org_id,
+    },
+  });
+}
+
+/**
+ * PUT /api/auth/role
+ * Updates the current user's RBAC role (`admin`, `reviewer`, `viewer`) in Supabase `profiles`
+ * and returns a newly signed session token reflecting the updated permissions.
+ */
+export async function updateUserRole(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const newRole: AppRole = normalizeRole(req.body?.role);
+    const userId = req.user?.id || '00000000-0000-0000-0000-000000000001';
+    const email = req.user?.email || 'analyst@apex-enterprise.io';
+    const fullName = req.user?.full_name || 'Enterprise User';
+    const orgId = req.user?.org_id || DEFAULT_ORG_ID;
+
+    if (isSupabaseConfigured && !userId.startsWith('00000000-0000-0000-0000-00000000000')) {
+      await supabaseAdmin
+        .from('profiles')
+        .update({ role: newRole })
+        .eq('id', userId);
+
+      await supabaseAdmin.from('audit_logs').insert({
+        org_id: orgId,
+        user_id: userId,
+        action: 'RBAC_ROLE_UPDATED',
+        details: {
+          email,
+          newRole,
+          roleLabel: getRoleDisplayName(newRole),
+          permissions: ROLE_PERMISSIONS[newRole],
+        },
+      });
+    }
+
+    const updatedToken = createSignedAppToken({
+      id: userId,
+      email,
+      fullName,
+      role: newRole,
+      orgId,
+      orgName: 'Apex Global Enterprises',
+    });
+
+    res.json({
+      message: `Authorization role updated to ${getRoleDisplayName(newRole)} (${newRole.toUpperCase()})`,
+      session: {
+        id: userId,
+        email,
+        fullName,
+        role: newRole,
+        roleLabel: getRoleDisplayName(newRole),
+        permissions: ROLE_PERMISSIONS[newRole],
+        orgId,
+        orgName: 'Apex Global Enterprises',
+        token: updatedToken,
+        isAuthenticated: true,
       },
     });
   } catch (error) {
@@ -230,9 +461,9 @@ export async function logoutUser(req: AuthenticatedRequest, res: Response): Prom
     if (isSupabaseConfigured && req.user) {
       await supabaseAdmin.from('audit_logs').insert({
         org_id: req.user.org_id || DEFAULT_ORG_ID,
-        user_id: req.user.id !== '00000000-0000-0000-0000-000000000001' ? req.user.id : null,
+        user_id: !req.user.id.startsWith('00000000-0000-0000-0000-00000000000') ? req.user.id : null,
         action: 'USER_SESSION_LOGOUT',
-        details: { email: req.user.email },
+        details: { email: req.user.email, role: req.user.role },
       });
     }
     res.json({ message: 'Session terminated successfully.' });
@@ -240,4 +471,3 @@ export async function logoutUser(req: AuthenticatedRequest, res: Response): Prom
     res.status(500).json({ error: (error as Error).message });
   }
 }
-

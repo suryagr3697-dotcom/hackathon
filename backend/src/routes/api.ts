@@ -3,6 +3,7 @@ import multer from 'multer';
 import rateLimit from 'express-rate-limit';
 import {
   requireOrganizationAuth,
+  requireRole,
   validateBody,
   DocumentUpdateZodSchema,
   SearchQueryZodSchema,
@@ -24,7 +25,13 @@ import {
   triggerWebhookDispatch,
   summarizeDocumentViaMcp,
 } from '../controllers/searchAndAnalyticsController';
-import { registerUser, loginUser, logoutUser } from '../controllers/authController';
+import {
+  registerUser,
+  loginUser,
+  logoutUser,
+  getCurrentUser,
+  updateUserRole,
+} from '../controllers/authController';
 import { runMigrations } from '../scripts/migrate';
 
 export const apiRouter = Router();
@@ -71,21 +78,35 @@ const aiPipelineRateLimiter = rateLimit({
   },
 });
 
-// Apply Organization Authentication & RLS context across all /api routes
+// Apply Organization Authentication & RBAC context across all /api routes
 apiRouter.use(requireOrganizationAuth);
 
-// 0. Supabase Authentication Routes (Register, Login, Logout)
+// 0. Authentication & RBAC Identity Routes (Register, Login, Logout, Profile, Role Switch)
 apiRouter.post('/auth/register', registerUser);
 apiRouter.post('/auth/login', loginUser);
 apiRouter.post('/auth/logout', logoutUser);
+apiRouter.get('/auth/me', getCurrentUser);
+apiRouter.put('/auth/role', updateUserRole);
 
-// 1. Document Ingestion & Management Routes
-apiRouter.post('/documents/upload', aiPipelineRateLimiter, upload.single('file'), uploadDocument);
+// 1. Document Ingestion & Management Routes (RBAC Enforced)
+apiRouter.post(
+  '/documents/upload',
+  requireRole(['admin', 'reviewer']),
+  aiPipelineRateLimiter,
+  upload.single('file'),
+  uploadDocument
+);
 apiRouter.get('/documents', listDocuments);
 apiRouter.get('/documents/:id', getDocumentById);
-apiRouter.put('/documents/:id', validateBody(DocumentUpdateZodSchema), updateDocument);
+apiRouter.put(
+  '/documents/:id',
+  requireRole(['admin', 'reviewer']),
+  validateBody(DocumentUpdateZodSchema),
+  updateDocument
+);
 apiRouter.post(
   '/documents/:id/reprocess',
+  requireRole(['admin', 'reviewer']),
   aiPipelineRateLimiter,
   validateBody(ReprocessOptionsZodSchema),
   reprocessDocument
@@ -98,13 +119,18 @@ apiRouter.post('/mcp/summarize/:id', aiPipelineRateLimiter, summarizeDocumentVia
 // 3. Real-Time Analytics & Audit Logs Route
 apiRouter.get('/analytics', getAnalytics);
 
-// 4. Organization Settings, Schemas & Webhook Hub
+// 4. Organization Settings, Schemas & Webhook Hub (Admin RBAC Protected for Mutations)
 apiRouter.get('/settings', getOrganizationSettings);
-apiRouter.put('/settings', validateBody(SettingsUpdateZodSchema), updateOrganizationSettings);
-apiRouter.post('/webhooks/dispatch', triggerWebhookDispatch);
+apiRouter.put(
+  '/settings',
+  requireRole(['admin']),
+  validateBody(SettingsUpdateZodSchema),
+  updateOrganizationSettings
+);
+apiRouter.post('/webhooks/dispatch', requireRole(['admin']), triggerWebhookDispatch);
 
-// 5. On-Demand Database Migration Trigger Endpoint (Admin Service Role)
-apiRouter.post('/admin/migrate', async (_req, res) => {
+// 5. On-Demand Database Migration Trigger Endpoint (Admin Service Role Only)
+apiRouter.post('/admin/migrate', requireRole(['admin']), async (_req, res) => {
   try {
     await runMigrations();
     res.json({
@@ -118,4 +144,3 @@ apiRouter.post('/admin/migrate', async (_req, res) => {
     });
   }
 });
-

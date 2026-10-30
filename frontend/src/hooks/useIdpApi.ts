@@ -96,6 +96,7 @@ function getAuthHeaders(): HeadersInit {
   return {
     Authorization: `Bearer ${session.token}`,
     'x-org-id': session.orgId,
+    'x-user-role': session.role,
   };
 }
 
