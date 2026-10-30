@@ -16,6 +16,7 @@ export const DocumentUpdateZodSchema = z.object({
 export const SearchQueryZodSchema = z.object({
   query: z.string().min(2, 'Search query must be at least 2 characters long.'),
   limit: z.number().optional().default(5),
+  documentId: z.string().optional(),
 });
 
 export const ReprocessOptionsZodSchema = z.object({

@@ -4,6 +4,7 @@ import { AuthenticatedRequest, sanitizeFileName } from '../middleware/authAndVal
 import { supabaseAdmin, isSupabaseConfigured } from '../config/supabase';
 import { localStore, DEFAULT_ORG_ID } from '../config/localStore';
 import { processDocumentPipeline, extractDocumentWithGemini, buildSemanticChunks, generateEmbedding } from '../services/idpPipeline';
+import { ensureMcpDocumentHydrated } from '../services/mcpService';
 
 /**
  * POST /api/documents/upload
@@ -167,6 +168,8 @@ export async function getDocumentById(req: AuthenticatedRequest, res: Response):
       res.status(404).json({ error: `Document with ID ${id} not found in organization.` });
       return;
     }
+
+    doc = await ensureMcpDocumentHydrated(doc);
 
     res.json({ document: doc });
   } catch (error) {

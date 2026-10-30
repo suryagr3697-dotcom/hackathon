@@ -13,7 +13,17 @@ export const DocumentUpdateZodSchema = z.object({
 export const SearchQueryZodSchema = z.object({
   query: z.string().min(2, 'Search query must be at least 2 characters long.'),
   limit: z.number().optional().default(5),
+  documentId: z.string().optional(),
 });
+
+export interface McpToolCallTrace {
+  toolName: string;
+  mcpResourceUri: string;
+  arguments: Record<string, any>;
+  status: 'executed' | 'verified';
+  outputPreview: string;
+  latencyMs: number;
+}
 
 export interface LineItem {
   description: string;
@@ -59,9 +69,13 @@ export interface DocumentItem {
       maintenanceInterval?: string;
       lineItems?: LineItem[];
       summary?: string;
+      keyTakeaways?: string[];
+      verbatimQuotes?: string[];
+      fullExtractedText?: string;
       [key: string]: any;
     };
     fieldConfidence?: Record<string, number>;
+    mcpToolTrace?: McpToolCallTrace[];
     [key: string]: any;
   };
   preview_data_url?: string;
@@ -69,7 +83,13 @@ export interface DocumentItem {
   updated_at: string;
 }
 
-export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+const isLocalhost =
+  typeof window !== 'undefined' &&
+  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
+export const API_BASE_URL = isLocalhost
+  ? ''
+  : (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 
 function getAuthHeaders(): HeadersInit {
   const { session } = useAppStore.getState();
@@ -216,10 +236,50 @@ export function useReprocessDocumentMutation() {
   });
 }
 
+export function useMcpSummarizeMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: { id: string; focusPrompt?: string }) => {
+      const res = await fetch(`${API_BASE_URL}/api/mcp/summarize/${payload.id}`, {
+        method: 'POST',
+        headers: {
+          ...getAuthHeaders(),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ focusPrompt: payload.focusPrompt }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'MCP Summarization failed' }));
+        throw new Error(err.error || 'MCP Summarization failed');
+      }
+      return res.json() as Promise<{
+        message: string;
+        mcpSummary: {
+          documentId: string;
+          fileName: string;
+          documentType: string;
+          executiveSummary: string;
+          keyTakeaways: string[];
+          verbatimQuotes: string[];
+          structuredEntities: Record<string, any>;
+          groundingStatus: string;
+          mcpProtocolVersion: string;
+          mcpToolTrace: McpToolCallTrace[];
+        };
+      }>;
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['document', variables.id] });
+      queryClient.invalidateQueries({ queryKey: ['documents'] });
+      queryClient.invalidateQueries({ queryKey: ['analytics'] });
+    },
+  });
+}
+
 export function useSemanticSearchMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (payload: { query: string; limit?: number }) => {
+    mutationFn: async (payload: { query: string; limit?: number; documentId?: string }) => {
       const validated = SearchQueryZodSchema.parse(payload);
       const res = await fetch(`${API_BASE_URL}/api/search`, {
         method: 'POST',
@@ -247,6 +307,8 @@ export function useSemanticSearchMutation() {
           totalAmount?: number;
           vendorOrIssuer?: string;
         }>;
+        mcpToolTrace?: McpToolCallTrace[];
+        groundingStatus?: string;
         embeddingModel: string;
         vectorDimensions: number;
         latencyMs: number;

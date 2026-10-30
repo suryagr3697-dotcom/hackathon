@@ -22,6 +22,7 @@ import {
   getOrganizationSettings,
   updateOrganizationSettings,
   triggerWebhookDispatch,
+  summarizeDocumentViaMcp,
 } from '../controllers/searchAndAnalyticsController';
 import { registerUser, loginUser, logoutUser } from '../controllers/authController';
 import { runMigrations } from '../scripts/migrate';
@@ -90,8 +91,9 @@ apiRouter.post(
   reprocessDocument
 );
 
-// 2. Semantic Vector RAG Search Route
+// 2. Semantic Vector RAG & MCP Summarization Routes
 apiRouter.post('/search', aiPipelineRateLimiter, validateBody(SearchQueryZodSchema), semanticSearch);
+apiRouter.post('/mcp/summarize/:id', aiPipelineRateLimiter, summarizeDocumentViaMcp);
 
 // 3. Real-Time Analytics & Audit Logs Route
 apiRouter.get('/analytics', getAnalytics);

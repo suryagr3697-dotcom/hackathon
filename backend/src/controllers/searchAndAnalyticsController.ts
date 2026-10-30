@@ -5,6 +5,7 @@ import { ai, FAST_MODEL, ACTIVE_FAST_MODELS } from '../config/gemini';
 import { supabaseAdmin, isSupabaseConfigured } from '../config/supabase';
 import { localStore, DEFAULT_ORG_ID } from '../config/localStore';
 import { generateEmbedding } from '../services/idpPipeline';
+import { executeMcpAgentQuery, executeMcpDocumentSummarization } from '../services/mcpService';
 
 const isGeminiConfigured = Boolean(
   process.env.GEMINI_API_KEY &&
@@ -140,80 +141,16 @@ export async function semanticSearch(req: AuthenticatedRequest, res: Response): 
       citations = scoredChunks.slice(0, limit);
     }
 
-    // 4. Synthesize Grounded RAG Answer using Gemini
-    let synthesizedAnswer = '';
-    const contextBlock = citations
-      .map(
-        (c, i) =>
-          `[Source ${i + 1}: ${c.fileName} (${c.documentType}, Similarity ${(c.similarity * 100).toFixed(1)}%)]\n${c.content}`
-      )
-      .join('\n\n');
-
-    if (isGeminiConfigured && citations.length > 0) {
-      for (const modelCandidate of ACTIVE_FAST_MODELS) {
-        try {
-          const ragResponse = await ai.models.generateContent({
-            model: modelCandidate,
-            contents: [
-              {
-                role: 'user',
-                parts: [
-                  {
-                    text: `You are an Enterprise AI Document Advisory & RAG Intelligence Engine. Analyze the user's request using the retrieved document context and provide:
-1. **Condition & Document Analysis**: Clear synthesis with exact citations and figures.
-2. **Actionable Remediation & Verification Plan**: Concrete next steps for financial, legal, medical, or operational compliance.
-3. **Advisory Disclaimer**: Standard enterprise governance/compliance disclaimer.
-
-USER QUESTION: ${cleanQuery}
-
-RETRIEVED DOCUMENT CONTEXT:
-${contextBlock}`,
-                  },
-                ],
-              },
-            ],
-          });
-          if (ragResponse.text) {
-            synthesizedAnswer = ragResponse.text;
-            break;
-          }
-        } catch {
-          // try next candidate model silently
-        }
-      }
-    }
-
-    if (!synthesizedAnswer) {
-      const qLower = cleanQuery.toLowerCase();
-      if (qLower.includes('q3') || qLower.includes('invoice') || qLower.includes('total payment')) {
-        const invoices = localStore.documents.filter(
-          (d) => d.org_id === orgId && d.document_type === 'Invoice'
-        );
-        const totalSum = invoices.reduce(
-          (acc, d) => acc + Number(d.extracted_data?.entities?.totalAmount || 0),
-          0
-        );
-        const breakdown = invoices
-          .map(
-            (d) =>
-              `${d.extracted_data?.entities?.vendorOrIssuer || d.file_name} ($${Number(
-                d.extracted_data?.entities?.totalAmount || 0
-              ).toLocaleString()} USD in [${d.file_name}])`
-          )
-          .join(' and ');
-
-        synthesizedAnswer = `### 1. Condition & Financial Analysis\nBased on the ingested Q3 vendor invoices in your organization archive, the **total payment due across all vendor invoices is $${totalSum.toLocaleString()}.00 USD**. This comprises ${breakdown}.\n\n### 2. Actionable Remediation & Verification Plan\n- **Approve & Schedule Disbursement**: Both invoices have passed >96% automated schema validation under Net 30 payment terms.\n- **Cost Optimization**: Audit reserved GPU instance utilization on AWS ($38,400.00) and Snowflake compute credit burn ($24,000.00) prior to Q4 renewal.\n\n### 3. Enterprise Advisory Disclaimer\n*This AI synthesis is generated from extracted document entities and pgvector embeddings. Verify final wire instructions against vendor master records prior to treasury disbursement.*`;
-      } else if (qLower.includes('contract') || qLower.includes('sla') || qLower.includes('liability') || qLower.includes('termination')) {
-        synthesizedAnswer = `### 1. Condition & Legal Risk Analysis\nAccording to **[MSA-SLA-2026-Vanguard-CyberSecurity.pdf]**, the Master Service Agreement with Vanguard CyberDefense Solutions LLC specifies a **liability cap of $500,000 aggregate or 2x annual fees** under State of Delaware governing law, and allows termination with **60 days written notice** or immediate termination if SOC SLA uptime drops below **99.95%**. The indemnification addendum scored **81% confidence** (below the 85% threshold).\n\n### 2. Actionable Remediation Plan\n- **Mandatory HITL Legal Review**: Inspect page 9 handwritten strike-throughs in the Document Verification Studio (\`/documents/22222222-2222-2222-2222-222222222203\`).\n- **Lock Verified Clauses**: Confirm the $500,000 liability cap with General Counsel and click **Approve & Lock**.\n\n### 3. Enterprise Advisory Disclaimer\n*Automated legal clause extraction is provided for decision support and does not constitute formal legal counsel. Human-in-the-Loop sign-off is required for clauses below 85% confidence.*`;
-      } else if (qLower.includes('medical') || qLower.includes('claim') || qLower.includes('mri') || qLower.includes('diagnosis')) {
-        synthesizedAnswer = `### 1. Condition & Clinical Claim Analysis\nIn **[MED-CLAIM-2026-MercyGeneral-88412.pdf]**, Mercy General Diagnostic & Imaging Center submitted a healthcare claim totaling **$4,320.00 USD** for patient reference **PT-90241-A**, covering ICD-10 diagnosis codes **M54.50 (Low back pain, unspecified)** and **G57.00 (Sciatica)**.\n\n### 2. Actionable Remediation & Adjudication Plan\n- **Cross-Check CPT Bundling**: Verify CPT 72148 (Lumbar Spine MRI - $2,850.00), CPT 99204 (Neurology Consult - $870.00), and CPT 80053 (Metabolic Panel - $600.00) against pre-authorization records.\n- **Adjudication Routing**: Straight-through processing approved at 94% confidence.\n\n### 3. Enterprise Advisory Disclaimer\n*Medical coding and claim summaries are synthesized for administrative adjudication only and must comply with HIPAA and payer policy guidelines.*`;
-      } else if (qLower.includes('siemens') || qLower.includes('voltage') || qLower.includes('maintenance') || qLower.includes('turbine')) {
-        synthesizedAnswer = `### 1. Condition & Technical Specification Analysis\nPer **[TECH-SPEC-Siemens-S7-1500-TurbineController.pdf]**, the Siemens SIMATIC S7-1500TF Redundant Controller operates at **24V DC (-15% / +20%, max ripple 5%)** with a total procurement value of **$32,900.00 USD**.\n\n### 2. Actionable Remediation & Maintenance Plan\n- **Schedule Preventive Calibration**: Configure plant CMMS alerts for SIL-3 safety calibration **every 4,000 operating hours or 6 months**.\n- **Verify Redundancy Sync**: Inspect all 4 PROFINET optical fiber sync modules upon commissioning.\n\n### 3. Enterprise Advisory Disclaimer\n*Engineering telemetry parameters are extracted from manufacturer specification sheets. Always consult certified plant safety engineers before modifying PLC hardware.*`;
-      } else {
-        const topCite = citations[0];
-        synthesizedAnswer = `### 1. Condition & Corpus Analysis\nSynthesized across **${citations.length} matching enterprise document chunks** (top citation: **[${topCite?.fileName || 'Enterprise Corpus'}]** at ${((topCite?.similarity || 0.88) * 100).toFixed(1)}% vector similarity): ${topCite?.content || 'Matched organization records.'}\n\n### 2. Actionable Remediation Plan\n- **Verify Source Entities**: Open the cited document in the Verification Studio to inspect field-level confidence scores.\n- **Apply Recommended Controls**: Follow domain-specific compliance and audit workflows.\n\n### 3. Enterprise Advisory Disclaimer\n*AI Advisory outputs are grounded in organization-scoped pgvector embeddings. Always verify critical operational, financial, or diagnostic decisions against primary source records.*`;
-      }
-    }
+    // 4. Synthesize Grounded RAG & Summarization Answer via Model Context Protocol (MCP) Agent
+    const documentIdFilter = req.body.documentId as string | undefined;
+    const mcpResult = await executeMcpAgentQuery({
+      query: cleanQuery,
+      orgId,
+      documentId: documentIdFilter && documentIdFilter !== 'all' ? documentIdFilter : undefined,
+      citations,
+    });
+    const synthesizedAnswer = mcpResult.answer;
+    const mcpToolTrace = mcpResult.mcpToolTrace;
 
     const latencyMs = Math.max(145, Date.now() - startTime);
     const validUserId =
@@ -257,6 +194,8 @@ ${contextBlock}`,
       query: cleanQuery,
       answer: synthesizedAnswer,
       citations,
+      mcpToolTrace,
+      groundingStatus: mcpResult.groundingStatus,
       embeddingModel: 'text-embedding-004',
       vectorDimensions: 768,
       latencyMs,
@@ -504,5 +443,88 @@ export async function triggerWebhookDispatch(req: AuthenticatedRequest, res: Res
     message: `Payload signed and dispatched to ${webhookUrl}`,
     timestamp: new Date().toISOString(),
   });
+}
+
+/**
+ * POST /api/mcp/summarize/:id
+ * Executes Model Context Protocol (MCP) document summarization on a specific document
+ * with strict zero-hallucination grounding and persists the updated summary + takeaways.
+ */
+export async function summarizeDocumentViaMcp(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const id = String(req.params.id);
+    const orgId = req.user?.org_id || DEFAULT_ORG_ID;
+    const focusPrompt = req.body?.focusPrompt as string | undefined;
+
+    const mcpSummary = await executeMcpDocumentSummarization(id, orgId, focusPrompt);
+
+    // Update document's extracted_data with the newly generated MCP summary, takeaways, and quotes
+    const idx = localStore.documents.findIndex((d) => d.id === id && d.org_id === orgId);
+    if (idx >= 0) {
+      const existingData = localStore.documents[idx].extracted_data || {};
+      localStore.documents[idx].extracted_data = {
+        ...existingData,
+        entities: {
+          ...(existingData.entities || {}),
+          summary: mcpSummary.executiveSummary,
+          keyTakeaways: mcpSummary.keyTakeaways,
+          verbatimQuotes: mcpSummary.verbatimQuotes,
+        },
+        mcpToolTrace: mcpSummary.mcpToolTrace,
+      };
+    }
+
+    if (isSupabaseConfigured) {
+      const { data: currentDoc } = await supabaseAdmin
+        .from('documents')
+        .select('extracted_data')
+        .eq('id', id)
+        .eq('org_id', orgId)
+        .maybeSingle();
+
+      if (currentDoc) {
+        const mergedData = {
+          ...(currentDoc.extracted_data || {}),
+          entities: {
+            ...(currentDoc.extracted_data?.entities || {}),
+            summary: mcpSummary.executiveSummary,
+            keyTakeaways: mcpSummary.keyTakeaways,
+            verbatimQuotes: mcpSummary.verbatimQuotes,
+          },
+          mcpToolTrace: mcpSummary.mcpToolTrace,
+        };
+        await supabaseAdmin
+          .from('documents')
+          .update({ extracted_data: mergedData, updated_at: new Date().toISOString() })
+          .eq('id', id)
+          .eq('org_id', orgId);
+      }
+
+      await supabaseAdmin.from('audit_logs').insert({
+        org_id: orgId,
+        user_id:
+          req.user?.id && req.user.id !== '00000000-0000-0000-0000-000000000001'
+            ? req.user.id
+            : null,
+        action: 'MCP_DOCUMENT_SUMMARIZATION_GENERATED',
+        details: {
+          documentId: id,
+          fileName: mcpSummary.fileName,
+          mcpToolsExecuted: mcpSummary.mcpToolTrace.map((t) => t.toolName),
+          groundingStatus: mcpSummary.groundingStatus,
+        },
+      });
+    }
+
+    res.json({
+      message: 'MCP Zero-Hallucination Document Summary generated successfully.',
+      mcpSummary,
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to generate MCP document summary.',
+      details: (error as Error).message,
+    });
+  }
 }
 

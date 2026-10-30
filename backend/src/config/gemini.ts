@@ -13,6 +13,29 @@ export const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY || 'MISSING_GEMINI_API_KEY',
 });
 
+let geminiKeyRejected = false;
+
+export function isGeminiApiAvailable(): boolean {
+  const key = process.env.GEMINI_API_KEY || '';
+  if (
+    !key ||
+    key === 'MISSING_GEMINI_API_KEY' ||
+    key.includes('your-gemini-api-key-here') ||
+    key.startsWith('AQ.') ||
+    geminiKeyRejected
+  ) {
+    return false;
+  }
+  return true;
+}
+
+export function markGeminiKeyIfRejected(err: unknown): void {
+  const msg = (err as Error)?.message || '';
+  if (msg.includes('401') || msg.includes('API key not valid') || msg.includes('UNAUTHENTICATED')) {
+    geminiKeyRejected = true;
+  }
+}
+
 // Standard model definitions with automatic fallback to current active Google AI Studio models
 export const FAST_MODEL = 'gemini-2.5-flash';
 export const REASONING_MODEL = 'gemini-2.5-pro';
@@ -22,27 +45,31 @@ export const ACTIVE_FAST_MODELS = ['gemini-3.8-flash', 'gemini-2.5-flash'];
 export const ACTIVE_REASONING_MODELS = ['gemini-3.8-pro', 'gemini-3.8-flash', 'gemini-2.5-pro'];
 export const ACTIVE_EMBEDDING_MODELS = ['gemini-embedding-001', 'text-embedding-004'];
 
-export const IDP_SYSTEM_PROMPT = `You are an elite AI Document Intelligence Engine and Principal Data Extractor. Your task is to analyze unstructured and structured document inputs (invoices, contracts, medical records, financial statements), classify their exact document type, extract all relevant key-value entities with high precision, calculate field-level confidence scores (0.0 to 1.0), and output strictly valid JSON conforming to the requested schema without any markdown wrapping or extraneous commentary.`;
+export const IDP_SYSTEM_PROMPT = `You are an elite AI Document Intelligence Engine, MCP-Orchestrated Document Summarizer, and Zero-Hallucination Data Extractor.
+CRITICAL GROUNDING DIRECTIVE:
+1. You must read the uploaded document thoroughly and extract/summarize ONLY facts, figures, clauses, and text explicitly present inside the document.
+2. NEVER invent, assume, extrapolate, or hallucinate any information outside the provided document. If a field is not present in the document, omit it or mark it as "Not specified in document".
+3. Provide a comprehensive, multi-section executive summary, key takeaways, verbatim textual evidence quotes, full transcribed document text, and structured key-value entities conforming strictly to the requested JSON schema.`;
 
 export const documentExtractionSchema: Schema = {
   type: Type.OBJECT,
   properties: {
     documentType: {
       type: Type.STRING,
-      description: 'Classify the document type: Invoice, TaxForm, Contract, MedicalRecord, Receipt, TechnicalSpec, Other',
+      description: 'Classify the document type based strictly on its content: Invoice, TaxForm, Contract, MedicalRecord, Receipt, TechnicalSpec, Report, Other',
     },
     confidenceScore: {
       type: Type.NUMBER,
-      description: 'Overall extraction confidence score between 0.0 and 1.0',
+      description: 'Overall extraction and grounding confidence score between 0.0 and 1.0',
     },
     entities: {
       type: Type.OBJECT,
-      description: 'Extracted key-value entities with confidence ratings',
+      description: 'Extracted key-value entities and comprehensive MCP document summarization grounded strictly in the document',
       properties: {
-        vendorOrIssuer: { type: Type.STRING },
-        recipient: { type: Type.STRING },
-        documentDate: { type: Type.STRING, description: 'YYYY-MM-DD format' },
-        invoiceNumber: { type: Type.STRING },
+        vendorOrIssuer: { type: Type.STRING, description: 'Author, issuer, organization, or vendor explicitly named in the document' },
+        recipient: { type: Type.STRING, description: 'Recipient, client, or target audience explicitly named in the document' },
+        documentDate: { type: Type.STRING, description: 'Document date (YYYY-MM-DD or as written in document)' },
+        invoiceNumber: { type: Type.STRING, description: 'Document ID, reference number, or invoice number if present' },
         paymentTerms: { type: Type.STRING },
         totalAmount: { type: Type.NUMBER },
         taxAmount: { type: Type.NUMBER },
@@ -69,9 +96,26 @@ export const documentExtractionSchema: Schema = {
             required: ['description', 'totalPrice'],
           },
         },
-        summary: { type: Type.STRING, description: 'Executive summary of the document contents' },
+        summary: {
+          type: Type.STRING,
+          description: 'Comprehensive, detailed executive summary of the entire document strictly grounded in the text',
+        },
+        keyTakeaways: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING },
+          description: 'Bullet list of key facts, critical obligations, findings, or takeaways explicitly stated in the document',
+        },
+        verbatimQuotes: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING },
+          description: 'Exact verbatim quotes or sentences directly from the document supporting the summary',
+        },
+        fullExtractedText: {
+          type: Type.STRING,
+          description: 'Complete, verbatim transcription of the readable text content inside the document for zero-hallucination RAG',
+        },
       },
-      required: ['vendorOrIssuer', 'summary'],
+      required: ['summary', 'keyTakeaways', 'fullExtractedText'],
     },
     fieldConfidence: {
       type: Type.OBJECT,
