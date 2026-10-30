@@ -78,15 +78,23 @@ export async function listDocuments(req: AuthenticatedRequest, res: Response): P
         .order('created_at', { ascending: false });
 
       if (!error && data && data.length > 0) {
-        // Merge in-memory preview_data_url if present
+        // Merge in-memory preview_data_url and any newly uploaded local documents still syncing in background
         const previewMap = new Map(
           localStore.documents.filter((d) => d.preview_data_url).map((d) => [d.id, d.preview_data_url])
         );
-        docs = data.map((d: any) => ({
+        const remoteDocs = data.map((d: any) => ({
           ...d,
           overall_confidence: Number(d.overall_confidence),
           preview_data_url: previewMap.get(d.id),
         }));
+        const remoteIds = new Set(remoteDocs.map((d: any) => d.id));
+        const unsyncedLocalDocs = localStore.documents.filter(
+          (d) =>
+            d.org_id === orgId &&
+            !remoteIds.has(d.id) &&
+            !d.id.startsWith('22222222-2222-2222-2222-22222222220')
+        );
+        docs = [...unsyncedLocalDocs, ...remoteDocs];
       }
     }
 

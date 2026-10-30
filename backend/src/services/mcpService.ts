@@ -180,10 +180,25 @@ export async function loadMcpOrganizationCorpus(orgId: string = DEFAULT_ORG_ID):
     ]);
 
     if (!docsRes.error && docsRes.data && docsRes.data.length > 0) {
-      documents = docsRes.data as any[];
+      const remoteDocs = docsRes.data as any[];
+      const remoteIds = new Set(remoteDocs.map((d: any) => d.id));
+      const unsyncedLocalDocs = localStore.documents.filter(
+        (d) =>
+          d.org_id === orgId &&
+          !remoteIds.has(d.id) &&
+          !d.id.startsWith('22222222-2222-2222-2222-22222222220')
+      );
+      documents = [...unsyncedLocalDocs, ...remoteDocs];
     }
     if (!chunksRes.error && chunksRes.data && chunksRes.data.length > 0) {
-      chunks = chunksRes.data as any[];
+      const remoteChunks = chunksRes.data as any[];
+      const remoteDocIds = new Set(remoteChunks.map((c: any) => c.document_id));
+      const unsyncedLocalChunks = localStore.chunks.filter(
+        (c) =>
+          !remoteDocIds.has(c.document_id) &&
+          !c.document_id.startsWith('22222222-2222-2222-2222-22222222220')
+      );
+      chunks = [...unsyncedLocalChunks, ...remoteChunks];
     }
   }
 

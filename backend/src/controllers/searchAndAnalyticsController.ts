@@ -103,10 +103,25 @@ export async function semanticSearch(req: AuthenticatedRequest, res: Response): 
           supabaseAdmin.from('document_chunks').select('id, document_id, chunk_index, content, created_at'),
         ]);
         if (!dbDocsRes.error && dbDocsRes.data && dbDocsRes.data.length > 0) {
-          allOrgDocs = dbDocsRes.data as any[];
+          const remoteDocs = dbDocsRes.data as any[];
+          const remoteIds = new Set(remoteDocs.map((d: any) => d.id));
+          const unsyncedLocalDocs = localStore.documents.filter(
+            (d) =>
+              d.org_id === orgId &&
+              !remoteIds.has(d.id) &&
+              !d.id.startsWith('22222222-2222-2222-2222-22222222220')
+          );
+          allOrgDocs = [...unsyncedLocalDocs, ...remoteDocs];
         }
         if (!dbChunksRes.error && dbChunksRes.data && dbChunksRes.data.length > 0) {
-          allOrgChunks = dbChunksRes.data as any[];
+          const remoteChunks = dbChunksRes.data as any[];
+          const remoteDocIds = new Set(remoteChunks.map((c: any) => c.document_id));
+          const unsyncedLocalChunks = localStore.chunks.filter(
+            (c) =>
+              !remoteDocIds.has(c.document_id) &&
+              !c.document_id.startsWith('22222222-2222-2222-2222-22222222220')
+          );
+          allOrgChunks = [...unsyncedLocalChunks, ...remoteChunks];
         }
       }
 
